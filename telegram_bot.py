@@ -60,7 +60,7 @@ class TestParser:
                     if test_data:
                         tests[file_path.stem] = test_data
             except Exception as e:
-                print(f"Error loading {file_path}: {e}")
+                print(f"Ошибка загрузки {file_path}: {e}")
 
         return tests
 
@@ -69,37 +69,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global TESTS
     if not TESTS:
         await update.message.reply_text(
-            "❌ Тестлар топилмади!\n"
+            "❌ Тесты не найдены!\n"
             "Пожалуйста проверьте папку 'data' и убедитесь что там есть .txt файлы с тестами."
         )
         return
 
     keyboard = [
-        [InlineKeyboardButton(f"📚 {name} ({len(tests)} сўрав)", callback_data=f"test_{name}")]
+        [InlineKeyboardButton(f"📚 {name} ({len(tests)} вопросов)", callback_data=f"test_{name}")]
         for name, tests in sorted(TESTS.items())
     ]
     keyboard.append([InlineKeyboardButton("🔄 Обновить", callback_data="refresh")])
 
     await update.message.reply_text(
-        "👋 Салом! Тест ўқув ўйинига хўш келибсиз!\n\n"
-        "📚 Тестни танлаңиз:",
+        "👋 Привет! Добро пожаловать в тест-боt!\n\n"
+        "📚 Выбери тест:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help message"""
     await update.message.reply_text(
-        "📚 <b>Тест ўқув ўйини</b>\n\n"
-        "/start - Асосий меню\n"
-        "/help - Бу маълумот\n\n"
-        "<b>Қондай ишлаташ:</b>\n"
-        "1. /start браузерни танлаңиз\n"
-        "2. Har bir savollarga javob beringiz\n"
-        "3. Охирида натижалари кўринади\n\n"
-        "🎨 <b>Рангни маъноси:</b>\n"
-        "🟦 Сизнинг жавобингиз\n"
-        "🟩 Тўғри жавоб\n"
-        "🟥 Нотўғри жавоб",
+        "📚 <b>Тест обучающий бот</b>\n\n"
+        "/start - Главное меню\n"
+        "/help - Эта справка\n\n"
+        "<b>Как это работает:</b>\n"
+        "1. /start выбери тест\n"
+        "2. Выбери режим (с подсказкой или экзамен)\n"
+        "3. Отвечай на вопросы\n"
+        "4. В конце увидишь результат\n\n"
+        "<b>Два режима:</b>\n"
+        "📚 <b>С подсказкой</b> - видишь правильный ответ (✅)\n"
+        "📝 <b>Экзамен</b> - ответы скрыты, показываем если ошибка",
         parse_mode="HTML"
     )
 
@@ -112,32 +112,43 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # Test selection
+    # Test selection - show mode selection
     if data.startswith("test_"):
         test_name = data[5:]
         if test_name not in TESTS:
-            await query.edit_message_text("❌ Тест топилмади!")
+            await query.edit_message_text("❌ Тест не найден!")
             return
 
-        # Initialize user state
-        USER_STATE[user_id] = {
-            'test_name': test_name,
-            'current_question': 0,
-            'answers': [],
-            'questions': TESTS[test_name]
-        }
+        keyboard = [
+            [InlineKeyboardButton("📚 С подсказкой", callback_data=f"mode_hint_{test_name}")],
+            [InlineKeyboardButton("📝 Экзамен", callback_data=f"mode_exam_{test_name}")],
+            [InlineKeyboardButton("← Назад", callback_data="back_to_tests")]
+        ]
 
-        await show_question(query, user_id)
+        await query.edit_message_text(
+            f"<b>Выбери режим:</b>\n{test_name}\n\n"
+            f"📚 <b>С подсказкой</b> - видишь правильный ответ\n"
+            f"📝 <b>Экзамен</b> - ответы скрыты, показываем если ошибка",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+
+    # Mode selection
+    elif data.startswith("mode_hint_"):
+        test_name = data[10:]
+        await init_test(query, user_id, test_name, mode='hint')
+
+    elif data.startswith("mode_exam_"):
+        test_name = data[10:]
+        await init_test(query, user_id, test_name, mode='exam')
 
     # Answer selection
     elif data.startswith("answer_"):
         if user_id not in USER_STATE:
-            await query.edit_message_text("❌ Сессия истека. /start браузерни яна басинг")
+            await query.edit_message_text("❌ Сессия истекла. Отправь /start")
             return
 
         answer_idx = int(data.split("_")[1])
-
-        # Move to next question
         await show_answer_result(query, user_id, answer_idx)
 
     # Restart test
@@ -145,41 +156,55 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in USER_STATE:
             state = USER_STATE[user_id]
             test_name = state['test_name']
-            USER_STATE[user_id] = {
-                'test_name': test_name,
-                'current_question': 0,
-                'answers': [],
-                'questions': TESTS[test_name]
-            }
-            await show_question(query, user_id)
+            mode = state['mode']
+            await init_test(query, user_id, test_name, mode=mode)
 
-    # Go to menu
-    elif data == "menu":
+    # Back to menu
+    elif data == "back_to_tests":
         if user_id in USER_STATE:
             del USER_STATE[user_id]
+        keyboard = [
+            [InlineKeyboardButton(f"📚 {name} ({len(tests)} вопросов)", callback_data=f"test_{name}")]
+            for name, tests in sorted(TESTS.items())
+        ]
+        keyboard.append([InlineKeyboardButton("🔄 Обновить", callback_data="refresh")])
         await query.edit_message_text(
-            "👋 Салом! Тест ўқув ўйинига хўш келибсиз!\n\n"
-            "📚 Тестни танлаңиз:",
-            reply_markup=await get_test_menu_keyboard()
+            "📚 Выбери тест:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     # Refresh tests
     elif data == "refresh":
         TESTS = TestParser.load_tests()
+        keyboard = [
+            [InlineKeyboardButton(f"📚 {name} ({len(tests)} вопросов)", callback_data=f"test_{name}")]
+            for name, tests in sorted(TESTS.items())
+        ]
+        keyboard.append([InlineKeyboardButton("🔄 Обновить", callback_data="refresh")])
         await query.edit_message_text(
-            "✅ Тестлар янгиланди!\n\n📚 Тестни танлаңиз:",
-            reply_markup=await get_test_menu_keyboard()
+            "✅ Тесты обновлены!\n\n📚 Выбери тест:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-async def get_test_menu_keyboard():
-    """Get keyboard with test selection"""
+async def init_test(query, user_id, test_name, mode):
+    """Initialize test with selected mode"""
     global TESTS
-    keyboard = [
-        [InlineKeyboardButton(f"📚 {name} ({len(tests)} сўрав)", callback_data=f"test_{name}")]
-        for name, tests in sorted(TESTS.items())
-    ]
-    keyboard.append([InlineKeyboardButton("🔄 Обновить", callback_data="refresh")])
-    return InlineKeyboardMarkup(keyboard)
+
+    USER_STATE[user_id] = {
+        'test_name': test_name,
+        'mode': mode,
+        'current_question': 0,
+        'answers': [],
+        'questions': TESTS[test_name]
+    }
+
+    await show_question(query, user_id)
+
+def truncate_text(text, max_len=200):
+    """Truncate text if too long"""
+    if len(text) > max_len:
+        return text[:max_len-3] + "..."
+    return text
 
 async def show_question(query, user_id):
     """Display current question"""
@@ -187,24 +212,37 @@ async def show_question(query, user_id):
     question_idx = state['current_question']
     questions = state['questions']
     question = questions[question_idx]
+    mode = state['mode']
 
     # Progress
-    progress = f"Сўрав {question_idx + 1}/{len(questions)}"
+    progress = f"Вопрос {question_idx + 1}/{len(questions)}"
 
-    # Create answer buttons - mark correct answer with ✅
-    keyboard = [
-        [InlineKeyboardButton(
-            f"{'✅ ' if i == question['correct'] else '   '}{opt}",
-            callback_data=f"answer_{i}"
-        )]
-        for i, opt in enumerate(question['options'])
-    ]
+    # Truncate long question text
+    question_text = truncate_text(question['text'], 250)
+
+    # Create answer buttons with truncated text
+    if mode == 'hint':
+        # Show correct answer with checkmark
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{'✅ ' if i == question['correct'] else '   '}{truncate_text(opt, 180)}",
+                callback_data=f"answer_{i}"
+            )]
+            for i, opt in enumerate(question['options'])
+        ]
+        hint_text = "\n<i>✅ = Правильный ответ</i>"
+    else:
+        # Hide correct answer
+        keyboard = [
+            [InlineKeyboardButton(f"{truncate_text(opt, 180)}", callback_data=f"answer_{i}")]
+            for i, opt in enumerate(question['options'])
+        ]
+        hint_text = ""
 
     text = (
         f"<b>{progress}</b>\n\n"
-        f"<b>❓ {question['text']}</b>\n\n"
-        f"<i>✅ = Тўғри жавоб</i>\n"
-        f"Жавобни танлаңиз:"
+        f"<b>❓ {question_text}</b>\n{hint_text}\n"
+        f"Выбери ответ:"
     )
 
     await query.edit_message_text(
@@ -217,6 +255,7 @@ async def show_answer_result(query, user_id, selected_answer):
     """Save answer and move to next question"""
     state = USER_STATE[user_id]
     question = state['questions'][state['current_question']]
+    mode = state['mode']
 
     # Save answer
     is_correct = selected_answer == question['correct']
@@ -226,13 +265,48 @@ async def show_answer_result(query, user_id, selected_answer):
         'is_correct': is_correct
     })
 
-    # Move to next question
+    # For exam mode, show correct answer if wrong
+    if mode == 'exam' and not is_correct:
+        correct_option = truncate_text(question['options'][question['correct']], 200)
+        selected_option = truncate_text(question['options'][selected_answer], 200)
+
+        text = (
+            f"❌ <b>Неправильно!</b>\n\n"
+            f"<b>Ты выбрал:</b>\n{selected_option}\n\n"
+            f"<b>Правильный ответ:</b>\n{correct_option}"
+        )
+
+        keyboard = [[InlineKeyboardButton("➡️ Дальше", callback_data="next_question")]]
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+        return
+
+    # For hint mode or correct answer, move to next immediately
+    await move_to_next(query, user_id)
+
+async def move_to_next(query, user_id):
+    """Move to next question or show results"""
+    state = USER_STATE[user_id]
     state['current_question'] += 1
 
     if state['current_question'] < len(state['questions']):
         await show_question(query, user_id)
     else:
         await show_results(query, user_id)
+
+async def button_callback_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle next question button (for exam mode)"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "next_question":
+        user_id = query.from_user.id
+        if user_id in USER_STATE:
+            await move_to_next(query, user_id)
 
 async def show_results(query, user_id):
     """Show test results"""
@@ -247,27 +321,27 @@ async def show_results(query, user_id):
     # Message based on score
     if percentage == 100:
         emoji = "🎉"
-        message = "Шамоллиқ! Барчаси тўғри!"
+        message = "Отлично! Все правильно!"
     elif percentage >= 80:
         emoji = "👏"
-        message = "Яхши ишлай!"
+        message = "Хорошо работаешь!"
     elif percentage >= 60:
         emoji = "📚"
-        message = "Яна ўқишни давом этинг"
+        message = "Продолжай учиться!"
     else:
         emoji = "💪"
-        message = "Сўртсинг, хатоларни ўрганинг"
+        message = "Повтори ошибки!"
 
     text = (
         f"{emoji} <b>{message}</b>\n\n"
-        f"<b>Натижалар:</b>\n"
+        f"<b>Результаты:</b>\n"
         f"🎯 <b>{percentage:.0f}%</b>\n"
-        f"✅ Тўғри: {correct_count}/{total_count}\n"
+        f"✅ Правильно: {correct_count}/{total_count}\n"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🔄 Қайта синаш", callback_data="restart")],
-        [InlineKeyboardButton("📚 Бошқа тест", callback_data="menu")]
+        [InlineKeyboardButton("🔄 Повторить", callback_data="restart")],
+        [InlineKeyboardButton("📚 Другой тест", callback_data="back_to_tests")]
     ]
 
     await query.edit_message_text(
@@ -284,12 +358,12 @@ def main():
     TESTS = TestParser.load_tests()
 
     if not TESTS:
-        print("⚠️  Тестлар топилмади! Пожалуйста проверьте папку 'data'")
+        print("⚠️  Тесты не найдены! Пожалуйста проверьте папку 'data'")
         return
 
-    print(f"✅ Юкланди {len(TESTS)} та тест:")
+    print(f"✅ Загружено {len(TESTS)} тестов:")
     for name, tests in TESTS.items():
-        print(f"   - {name}: {len(tests)} сўрав")
+        print(f"   - {name}: {len(tests)} вопросов")
 
     # Get token
     TOKEN = "8633297005:AAGKa3jK6hyg1gM6D1G2TfYVUknLWUZPBbY"
@@ -300,11 +374,12 @@ def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(button_callback_next, pattern="next_question"))
     application.add_handler(CallbackQueryHandler(button_callback))
 
     # Start bot
-    print("🤖 Бот ишга тушди...")
-    print("Бот ишлаб турганда Ctrl+C'ни басинг узмотиш учун.")
+    print("🤖 Бот запущен!")
+    print("Бот работает. Нажмите Ctrl+C для остановки.")
     application.run_polling()
 
 if __name__ == '__main__':
