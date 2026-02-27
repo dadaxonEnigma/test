@@ -81,7 +81,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("🔄 Обновить", callback_data="refresh")])
 
     await update.message.reply_text(
-        "👋 Привет! Добро пожаловать в тест-боt!\n\n"
+        "👋 Привет! Добро пожаловать в тест-бот!\n\n"
         "📚 Выбери тест:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -200,12 +200,6 @@ async def init_test(query, user_id, test_name, mode):
 
     await show_question(query, user_id)
 
-def truncate_text(text, max_len=200):
-    """Truncate text if too long"""
-    if len(text) > max_len:
-        return text[:max_len-3] + "..."
-    return text
-
 async def show_question(query, user_id):
     """Display current question"""
     state = USER_STATE[user_id]
@@ -217,31 +211,22 @@ async def show_question(query, user_id):
     # Progress
     progress = f"Вопрос {question_idx + 1}/{len(questions)}"
 
-    # Truncate long question text
-    question_text = truncate_text(question['text'], 250)
+    # Create answer buttons with full text
+    keyboard = []
+    for i, opt in enumerate(question['options']):
+        prefix = f"{'✅ ' if mode == 'hint' and i == question['correct'] else ''}"
 
-    # Create answer buttons with truncated text
-    if mode == 'hint':
-        # Show correct answer with checkmark
-        keyboard = [
-            [InlineKeyboardButton(
-                f"{'✅ ' if i == question['correct'] else '   '}{truncate_text(opt, 180)}",
-                callback_data=f"answer_{i}"
-            )]
-            for i, opt in enumerate(question['options'])
-        ]
-        hint_text = "\n<i>✅ = Правильный ответ</i>"
-    else:
-        # Hide correct answer
-        keyboard = [
-            [InlineKeyboardButton(f"{truncate_text(opt, 180)}", callback_data=f"answer_{i}")]
-            for i, opt in enumerate(question['options'])
-        ]
-        hint_text = ""
+        btn = InlineKeyboardButton(
+            f"{prefix}{opt}",
+            callback_data=f"answer_{i}"
+        )
+        keyboard.append([btn])
+
+    hint_text = "\n<i>✅ = Правильный ответ</i>" if mode == 'hint' else ""
 
     text = (
         f"<b>{progress}</b>\n\n"
-        f"<b>❓ {question_text}</b>\n{hint_text}\n"
+        f"<b>❓ {question['text']}</b>\n{hint_text}\n"
         f"Выбери ответ:"
     )
 
@@ -267,8 +252,8 @@ async def show_answer_result(query, user_id, selected_answer):
 
     # For exam mode, show correct answer if wrong
     if mode == 'exam' and not is_correct:
-        correct_option = truncate_text(question['options'][question['correct']], 200)
-        selected_option = truncate_text(question['options'][selected_answer], 200)
+        correct_option = question['options'][question['correct']]
+        selected_option = question['options'][selected_answer]
 
         text = (
             f"❌ <b>Неправильно!</b>\n\n"
